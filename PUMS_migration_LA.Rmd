@@ -1,0 +1,370 @@
+---
+title: "PUMS Personal Project: Los Angeles & Migration"
+author: "ARIEGE BESSON"
+date: "May 6, 2025"
+output: pdf_document
+urlcolor: blue
+---
+
+# Project Description 
+
+An exploration of migration into & away from Los Angeles, using PUMS variables from the 2023 ACS. Where are people coming from (and moving to), and are there patterns related to income? These are really just some of the first questions that come to mind. No real purpose here except to explore PUMS data relating to moving and migration. 
+  
+- Citation: Steven Ruggles, Sarah Flood, Matthew Sobek, Daniel Backman, Grace Cooper, Julia A. Rivera Drew, Stephanie Richards, Renae Rodgers, Jonathan Schroeder, and Kari C.W. Williams. IPUMS USA: Version 16.0 [dataset]. Minneapolis, MN: IPUMS, 2025. https://doi.org/10.18128/D010.V16.0
+
+## Some Questions
+
+**Coming To Los Angeles**
+
+- What is the median income of people coming to LA?
+- From what countries are the most people coming from? And from what states and counties? 
+- Looking at the wealthiest movers by percentile: where are they from?
+- What is the median income of Venezuelans (or any particular national origin) who came to LA in x year? How does it vary across years?
+- How does median income for international Latino migrants vary by the number of years they have been in the US? How does it vary across national origin?
+
+**Leaving Los Angeles**
+
+- Similar to the questions above above: what is the median income of people leaving LA? What are the top destination counties and states for people leaving? Countries? and do these patterns differ for the wealthiest people leaving LA?
+- On that theme: what is the average education of people leaving Los Angeles and how does it compare to the education levels of Californians overall?
+
+## Part 1: Setup
+
+- load packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(stringr)
+library(haven)
+library(tidycensus)
+library(tidyr)
+library(ipumsr)
+library(Hmisc)
+library(dplyr) #running dplyr after Hmisc is on purpose
+library(data.table)
+library(patchwork)
+library(here)
+```
+
+- run code to clear the environment
+
+```{r, eval=FALSE}
+rm(list = ls())
+```
+
+- set your working directory
+
+  -or not, because in .Rmd better to use here() as knitr controls the working directory.
+
+- call in data: select variables from the 2023 ACS
+
+```{r}
+ddi <- read_ipums_ddi(here("usa_00005.xml"))
+data <- read_ipums_micro(ddi)
+```
+
+## Part 2: Take A Look
+
+To start: exploratory things, see/note type of each variable
+
+```{r, eval=FALSE}
+View(data)
+names(data)
+str(data)
+```
+
+## Part 3: Make 2 datasets, one for people coming to LA and one for people leaving LA
+
+**Coming**
+
+To find people moving to Los Angeles, we will filter for respondents in LA (use the county FIPS code (06037)) whose value for the variable MIGRATE1 is 2, 3 or 4.
+
+```{r}
+coming <- data %>%
+  filter(STATEFIP == 6,
+          COUNTYFIP == 037,
+          MIGRATE1 %in% c(2, 3, 4))
+```
+
+**Leaving**
+
+To find people who left Los Angeles, we will filter for respondents for whom MIGPLAC1 is 06 (California) and MIGCOUNTY1 is 037 (Los Angeles).
+
+```{r}
+leaving <- data %>%
+  filter(MIGPLAC1 == 6,
+         MIGCOUNTY1 == 037)
+```
+
+## Part 4: Find the median incomes of people coming and leaving LA
+
+- I'll save these as objects/use pull() to be able to center graphs around medians later
+- notes on INCTOT: for now, I will restrict this variable to positive numbers, filter out topcodes, and use only personal income (there's also a variable for total family income).
+
+**Coming**
+
+```{r}
+medc <- coming %>%
+  filter(
+    INCTOT > 0,
+    INCTOT != 9999999) %>%
+  summarise(
+    medianincome = round(wtd.quantile(INCTOT, weights =PERWT, probs = 0.5, na.rm = TRUE), 0)
+  ) %>%
+  pull() %>%
+  print()
+```
+
+**Leaving**
+
+```{r}
+medl <- leaving %>%
+  filter(
+    INCTOT > 0,
+    INCTOT != 9999999) %>%
+  summarise(
+    medianincome = round(wtd.quantile(INCTOT, weights =PERWT, probs = 0.5, na.rm = TRUE), 0)
+  ) %>%
+  pull() %>%
+  print()
+```
+
+So, the median income of people coming and going differs by less than $2,000. To get a better sense of the distribution of incomes of people coming and going, I'll make histograms.
+
+## Part 5: Make and compare histograms of median income for people coming and leaving LA
+
+- Note: using the person-level variable weight here, PERWT, will result in replicate-weighted counts for the histogram, which I want
+
+```{r pressure, echo=FALSE}
+#coming
+comingplot <- coming %>%
+  filter(
+    INCTOT > 0,
+    INCTOT != 9999999) %>%
+  ggplot(aes(x = INCTOT, weight = PERWT)) +
+  geom_histogram(binwidth = 10000, fill = "cadetblue", color = "white") +
+  coord_cartesian(xlim = c(0, 200000), ylim = c(0, 100000)) +
+  scale_x_continuous(labels = scales::dollar_format()) +
+  labs(
+    title = "Income of People Who Moved to LA",
+    x = "Total Personal Income",
+    y = "Weighted Count"
+  ) +
+  theme_classic()
+
+#leaving
+leavingplot <- leaving %>%
+  filter(
+    INCTOT > 0,
+    INCTOT != 9999999) %>%
+  ggplot(aes(x = INCTOT, weight = PERWT)) +
+  geom_histogram(binwidth = 10000, fill = "steelblue", color = "white") +
+  coord_cartesian(xlim = c(0, 200000), ylim = c(0, 100000)) +
+  scale_x_continuous(labels = scales::dollar_format()) +
+  labs(
+    title = "Income of People Who Left LA",
+    x = "Total Personal Income",
+    y = "Weighted Count"
+  ) +
+  theme_classic()
+
+#show tg
+comingplot + leavingplot
+```
+
+## Part 6: Find the top countries, states and counties that people are coming to LA from
+
+- Of course...and this caveat goes for anything calculated using ACS data, there are limitations to census data. Census workers don't get to everyone and immigrant populations especially have had some credible fear of participating in the census since at least 2016.
+- Here I'll cut to just the top 20 locations in each category.
+
+**Countries**
+
+```{r}
+#filter
+comingcountry <- coming %>%   
+  filter(MIGPLAC1 >= 100) %>%
+  count(MIGPLAC1, sort = TRUE) %>%
+  slice_head(n = 20)
+
+#bring in key
+countrykey <- read.csv(file.path("MIGPLAC1COUNTRYLOOKUP.csv"))
+
+#join:
+comingcountry <- left_join(comingcountry, countrykey, by = c("MIGPLAC1" = "Value"))
+
+#add in a percent total column
+comingcountry <- comingcountry %>%
+  mutate(percent_total = round((n/sum(n)), 4))
+```
+
+Top 20 Countries of Origin
+```{r}
+comingcountry
+```
+
+**States & Counties**
+
+```{r}
+#filter
+comingcounty <- coming %>%
+  filter(MIGPLAC1 <= 100) %>%
+  mutate(MIGFIPS = str_pad(MIGPLAC1, width = 2, pad = "0") %>%
+           paste0(str_pad(MIGCOUNTY1, width = 3, pad = "0"))) %>%
+  count(MIGFIPS, sort = TRUE) %>%
+  slice_head(n = 20)                
+
+#bring in keys
+cacountykey <- read.delim("californiacountykey.txt", sep = "|", 
+                          header = TRUE, stringsAsFactors = FALSE)
+othercounty <- read.csv(file.path("xtrafipskey.csv"))
+
+#format fips
+cacountykey <- cacountykey %>%
+  mutate(FIPS = str_pad(STATEFP, width = 2, pad = "0") %>%
+           paste0(str_pad(COUNTYFP, width = 3, pad = "0")))
+othercounty <- othercounty %>%
+  mutate(FIPS = str_pad(FIPS, width = 5, pad = "0"))
+
+#bind rows cacounty and othercounty
+countykey <- bind_rows(cacountykey, othercounty)
+
+#join
+comingcounty <- comingcounty %>%
+  left_join(
+    countykey %>% select(FIPS, STATE, COUNTYNAME),
+    by = c("MIGFIPS" = "FIPS")
+  )
+
+#add in a percent total column
+comingcounty <- comingcounty %>%
+  mutate(percent_total = round((n/sum(n)), 4))
+```
+
+Top 20 Counties of Origin
+```{r}
+comingcounty
+```
+
+## Part 7: 2023 median income for California immigrant Latinos by number of years in the US
+
+I'll skip ahead to an interesting question (for me). How does median income for international Latino migrants in 2023 vary by the number of years that they have been here? Does median income increase the longer someone has been in the states? And how about national origin-- how does median income for international Latino migratns in 2023 vary by their national origin? 
+
+- This is likely better answered by looking at a larger geography than Los Angeles...we'll start with the state of California.
+
+**What variables to use?**
+
+- First: how to identify international migrants? 
+  - The variable YRSUSA1 (discussed below) automatically filters for international migrants: YRSUSA1 "reports how long a person who was born in a foreign country or U.S. outlying area had been living in the United States" so we are all good
+
+- Second: how to identify Latinos?
+  - Racial and ethnic identity variables include RACE, ANCESTR1 (ancestry) and HISPAN (hispanic origin). Hispanic origin takes into account Spanish ancestry but oh well. HISPAND can be used for more detailed national origin. I'll check first that the same population has responses for HISPAN and HISPAND:
+  
+```{r, eval=FALSE}
+data %>% filter(!(HISPAN %in% c(0, 9))) %>% sum()
+data %>% filter(!(HISPAND %in% c(000, 900))) %>% sum()
+```
+
+- Third: how to find the number of years since immigration?
+  - Use YRSUSA1, cut out values of 00 (N/A or less than one year). Other option: YRIMM
+ 
+- Fourth: the variable to measure income
+  - Use INCTOT, and as previously restrict to positive numbers, filter out 9999999
+
+
+**Creating the table**
+
+```{r}
+incbyyrs <- data %>%
+  filter(STATEFIP == 6,
+         YRSUSA1 >= 1,
+         !(HISPAND %in% c(000, 900)),
+         INCTOT > 0,
+         INCTOT != 9999999
+  ) %>%
+  group_by(YRSUSA1) %>%
+  summarise(median_income = wtd.quantile(INCTOT, weights = PERWT, probs = 0.5, na.rm = TRUE),
+            mean_income = weighted.mean(INCTOT, w = PERWT, na.rm = TRUE),
+            n_ppl = n(),
+            n_ppl_weighted = sum(PERWT, na.rm = TRUE)
+            )
+```
+
+Table Preview
+```{r}
+head(incbyyrs, 10)
+```
+
+**Graphing the results**
+
+- I'll try a line plot to start
+
+```{r, echo=FALSE}
+ggplot(incbyyrs, aes(x = YRSUSA1, y = median_income)) +
+  geom_line(color = "aquamarine2") +
+  geom_point(color = "darkorchid", size = 1) +
+  labs(
+    title = "Median Income by Years in the U.S. (CA Hispanic Immigrants)",
+    x = "Years in the U.S.",
+    y = "Median Income (2023 dollars)"
+  ) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  theme_minimal()
+```
+
+Looking at this graph, we can see that the median income for CA Latino immigrants does tend to increase with the number of years since coming the US, at least until about 40 years presence in the US, where the median drops off. Generally speaking, Latino immigrants who have been in the US for 20-40 years have the highest median incomes. The drop in later years could also be due to age; older adults may not be working and may have less personal income.
+
+- And here is a visual comparison of the median and mean values. 
+
+```{r, echo=FALSE}
+ggplot(incbyyrs, aes(x = YRSUSA1)) +
+  geom_line(aes(y = median_income, color = "Median")) +
+  geom_line(aes(y = mean_income, color = "Mean")) +
+  labs(
+    title = "CA Hispanic immigrants: Mean vs. Median Income by Years in the U.S.",
+    x = "Years in the U.S.",
+    y = "Income",
+    color = "Statistic"
+  ) +
+  scale_y_continuous(labels = scales::dollar_format()) +
+  theme_minimal()
+```
+
+As expected, the mean varies more, is higher than median (pulled by high outliers) but follows the same shape as the median across the Y axis of years in the US.
+
+## Part 8: 2023 median income for California immigrant Latinos by national origin
+
+**Creating a table**
+
+```{r}
+#make the table
+incbynat <- data %>%
+  filter(STATEFIP == 6,
+         YRSUSA1 >= 1,
+         !(HISPAND %in% c(000, 900)),
+         INCTOT > 0,
+         INCTOT != 9999999
+  ) %>%
+  group_by(HISPAND) %>%
+  summarise(median_income = wtd.quantile(INCTOT, weights = PERWT, probs = 0.5, na.rm = TRUE),
+            mean_income = weighted.mean(INCTOT, w = PERWT, na.rm = TRUE),
+            n_ppl = n(),
+            n_ppl_weighted = sum(PERWT, na.rm = TRUE)
+  ) %>%
+  arrange(desc(median_income))
+
+#add key to see countries of origin named
+hispand_key <- read.csv(file.path("pums_hispand_key.csv"))
+incbynat <- incbynat %>% left_join(hispand_key, by = c("HISPAND" = "Value"))
+```
+
+Here's the table
+```{r}
+head(incbynat, 20)
+```
+
+In reference to the table, Paraguayan immigrants are making significantly more money on average than other Latino immigrant groups. However, the sample size is small: My sample includes 11 Paraguayan immigrant respondents in California.
+
+
+*and that's all for now!*
+
