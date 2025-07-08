@@ -171,6 +171,98 @@ leavingplot <- leaving %>%
 
 #show tg
 comingplot + leavingplot
+
+```
+Because the patterns between people coming and people leaving are similar, across income bins, let's try another way to see the difference.
+
+First I'll look at the net difference in aggregate households, acrors income bins. This will show us the net migration effect in Los Angeles in 2023 per income bin. Or in  other words, how much each income group grow or shrink due to migration?
+
+```{r, echo=FALSE}
+#step 1: create income bins to compare inflow and outflow across consistent intervals
+
+#bin breaks defined here, including a 200,000-1.5 mil bin in case it's interesting
+income_bins <- c(seq(0, 200000 - 20000, by = 20000), 1500000)
+
+#create labels to avoid cut() scientific notation in the next steps
+income_labels <- paste0(
+  scales::dollar_format(accuracy = 1)(head(income_bins, -1)),
+  "–",
+  scales::dollar_format(accuracy = 1)(tail(income_bins, -1)))
+# change name of top bin label manually
+income_labels[length(income_labels)] <- "$200,000+"
+
+#now bin the two datasets
+coming_binned <- coming %>%
+  filter(INCTOT > 0, INCTOT != 9999999) %>%
+  mutate(income_bin = cut(INCTOT, breaks = income_bins, labels = income_labels, include.lowest = TRUE)) %>%
+  group_by(income_bin) %>%
+  summarise(total_in = sum(PERWT, na.rm = TRUE))
+
+leaving_binned <- leaving %>%
+  filter(INCTOT > 0, INCTOT != 9999999) %>%
+  mutate(income_bin = cut(INCTOT, breaks = income_bins, labels = income_labels, include.lowest = TRUE)) %>%
+  group_by(income_bin) %>%
+  summarise(total_out = sum(PERWT, na.rm = TRUE))
+
+#step 2: compute net difference per bin between coming and leaving
+net_2023 <- full_join(coming_binned, leaving_binned, by = "income_bin") %>%
+  replace_na(list(total_in = 0, total_out = 0)) %>%
+  mutate(net_migration = total_in - total_out)
+
+#now graph net_migration in histogram by income bin as above
+net_histogram <- ggplot(net_2023, aes(x = income_bin, y = net_migration)) +
+  geom_col(fill = "darkolivegreen") +
+  labs(
+    title = "Net Household Migration to LA by Income Bin (2023)",
+    x = "Income Bin",
+    y = "Net Migration (Inflow - Outflow)"
+  ) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#and plot it
+net_histogram
+
+```
+
+Second, I'll try a line segment chart that is plotted to show the total inflow and outflow households by income bin. Here, the focus is on movement intensity and symmetry. In other words, how many households came and went for each income group, regardless of net change? Ok so line segment doesn't show much because difference is small. Instead, here are two plots to compare inflow and outflow by income bins.
+
+```{r, echo=FALSE}
+#Part 1 histogram faceted by direction of movement
+migration_long <- net_2023 %>%
+  select(income_bin, total_in, total_out) %>%
+  pivot_longer(cols = c(total_in, total_out),
+               names_to = "direction",
+               values_to = "count") %>%
+  mutate(direction = recode(direction, total_in = "Inflow", total_out = "Outflow"))
+
+facet_plot <- ggplot(migration_long, aes(x = income_bin, y = count, fill = direction)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Inflow vs Outflow of Households by Income Bin",
+    x = "Income Bin",
+    y = "Weighted Count"
+  ) +
+  scale_fill_manual(values = c("Inflow" = "cadetblue", "Outflow" = "steelblue")) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+absolute_plot <- net_2023 %>%
+  mutate(abs_diff = abs(total_in - total_out)) %>%
+  ggplot(aes(x = income_bin, y = abs_diff)) +
+  geom_col(fill = "darkorange") +
+  labs(
+    title = "Absolute Difference Between Inflow and Outflow by Income Bin",
+    x = "Income Bin",
+    y = "Difference in Household Count"
+  ) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  
+#now show tg
+facet_plot + absolute_plot
+
 ```
 
 ## Part 6: Find the top countries, states and counties that people are coming to LA from
